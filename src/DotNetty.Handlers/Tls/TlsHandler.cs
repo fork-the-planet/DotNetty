@@ -372,13 +372,10 @@ namespace DotNetty.Handlers.Tls
                         (int packetLength, byte type) = packetInfos[packetIndex];
                         this.mediationStream.ExpandSource(packetLength);
 
-                        if (type == TlsUtils.SSL_CONTENT_TYPE_APPLICATION_DATA)
-                        {
-                            // Due to SslStream's implementation, it's possible that we expand after handshake completed. Hence, we
-                            // need to make sure we call ReadFromSslStreamAsync for these packets later
-                            this.pendingDataPackets = this.pendingDataPackets ?? new List<(int packetLength, byte packetContentType)>(8);
-                            this.pendingDataPackets.Add((packetLength, type));
-                        }
+                        // Due to SslStream's implementation, it's possible that we expand after handshake completed. Hence, we
+                        // need to make sure we call ReadFromSslStreamAsync for these packets later
+                        this.pendingDataPackets = this.pendingDataPackets ?? new List<(int packetLength, byte packetContentType)>(8);
+                        this.pendingDataPackets.Add((packetLength, type));
 
                         if (++packetIndex == packetInfos.Count)
                         {
@@ -426,6 +423,7 @@ namespace DotNetty.Handlers.Tls
                     packetIndex = 0;
                 }
 
+                byte lastPacketType = 0;
                 for (; packetIndex < packetInfos.Count; packetIndex++)
                 {
                     int currentPacketLength = packetInfos[packetIndex].packetLength;
@@ -449,39 +447,63 @@ namespace DotNetty.Handlers.Tls
                         int read = currentReadFuture.Result;
                         if (read == 0)
                         {
-                            //Stream closed
-                            return;
-                        }
+                            // If lastPacketType is 0, it means we are in the first iteration and the pending read
+                            // was waiting for the current packet (which we just expanded).
+                            byte typeToCheck = lastPacketType != 0 ? lastPacketType : packetInfos[packetIndex].packetContentType;
+                            
+                            // If we have more packets to process, we should continue even if SslStream produced 0 bytes.
+                            // This handles the case where a control packet (e.g. CCS or Handshake) is followed immediately by Data.
+                            bool hasMorePackets = packetIndex < packetInfos.Count - 1;
 
-                        // Now output the result of previous read and decide whether to do an extra read on the same source or move forward
-                        AddBufferToOutput(outputBuffer, read, output);
-
-                        currentReadFuture = null;
-                        outputBuffer = null;
-                        if (!this.mediationStream.SourceIsReadable)
-                        {
-                            // we just made a frame available for reading but there was already pending read so SslStream read it out to make further progress there
-
-                            if (read < outputBufferLength)
+                            if (hasMorePackets || (typeToCheck != 0 && typeToCheck != TlsUtils.SSL_CONTENT_TYPE_APPLICATION_DATA))
                             {
-                                // SslStream returned non-full buffer and there's no more input to go through ->
-                                // typically it means SslStream is done reading current frame so we skip
-                                continue;
+                                // ignore 0-byte read for non-app data (e.g. handshake) or if we have more data to feed
+                                currentReadFuture = null;
+                                outputBuffer = null;
                             }
-
-                            // we've read out `read` bytes out of current packet to fulfil previously outstanding read
-                            outputBufferLength = currentPacketLength - read;
-                            if (outputBufferLength <= 0)
+                            else
                             {
-                                // after feeding to SslStream current frame it read out more bytes than current packet size
-                                outputBufferLength = FallbackReadBufferSize;
+                                //Stream closed
+                                return;
                             }
                         }
                         else
                         {
-                            // SslStream did not get to reading current frame so it completed previous read sync
-                            // and the next read will likely read out the new frame
-                            outputBufferLength = currentPacketLength;
+                            // Now output the result of previous read and decide whether to do an extra read on the same source or move forward
+                            AddBufferToOutput(outputBuffer, read, output);
+
+                            currentReadFuture = null;
+                            outputBuffer = null;
+                        }
+
+                        if (currentReadFuture == null)
+                        {
+                            if (!this.mediationStream.SourceIsReadable)
+                            {
+                                // we just made a frame available for reading but there was already pending read so SslStream read it out to make further progress there
+
+                                if (read < outputBufferLength)
+                                {
+                                    // SslStream returned non-full buffer and there's no more input to go through ->
+                                    // typically it means SslStream is done reading current frame so we skip
+                                    lastPacketType = packetInfos[packetIndex].packetContentType;
+                                    continue;
+                                }
+
+                                // we've read out `read` bytes out of current packet to fulfil previously outstanding read
+                                outputBufferLength = currentPacketLength - read;
+                                if (outputBufferLength <= 0)
+                                {
+                                    // after feeding to SslStream current frame it read out more bytes than current packet size
+                                    outputBufferLength = FallbackReadBufferSize;
+                                }
+                            }
+                            else
+                            {
+                                // SslStream did not get to reading current frame so it completed previous read sync
+                                // and the next read will likely read out the new frame
+                                outputBufferLength = currentPacketLength;
+                            }
                         }
                     }
                     else
@@ -491,6 +513,7 @@ namespace DotNetty.Handlers.Tls
                     }
 
                     outputBuffer = ctx.Allocator.Buffer(outputBufferLength);
+                    lastPacketType = packetInfos[packetIndex].packetContentType;
                     currentReadFuture = this.ReadFromSslStreamAsync(outputBuffer, outputBufferLength);
                 }
 
