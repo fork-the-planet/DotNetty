@@ -442,41 +442,35 @@ namespace DotNetty.Handlers.Tls
                             return;
                         }
 
-                        {
-                            // Now output the result of previous read and decide whether to do an extra read on the same source or move forward
-                            AddBufferToOutput(outputBuffer, read, output);
+                        // Now output the result of previous read and decide whether to do an extra read on the same source or move forward
+                        AddBufferToOutput(outputBuffer, read, output);
 
-                            currentReadFuture = null;
-                            outputBuffer = null;
+                        currentReadFuture = null;
+                        outputBuffer = null;
+                        if (!this.mediationStream.SourceIsReadable)
+                        {
+                            // we just made a frame available for reading but there was already pending read so SslStream read it out to make further progress there
+
+                            if (read < outputBufferLength)
+                            {
+                                // SslStream returned non-full buffer and there's no more input to go through ->
+                                // typically it means SslStream is done reading current frame so we skip
+                                continue;
+                            }
+
+                            // we've read out `read` bytes out of current packet to fulfil previously outstanding read
+                            outputBufferLength = currentPacketLength - read;
+                            if (outputBufferLength <= 0)
+                            {
+                                // after feeding to SslStream current frame it read out more bytes than current packet size
+                                outputBufferLength = FallbackReadBufferSize;
+                            }
                         }
-
-                        if (currentReadFuture == null)
+                        else
                         {
-                            if (!this.mediationStream.SourceIsReadable)
-                            {
-                                // we just made a frame available for reading but there was already pending read so SslStream read it out to make further progress there
-
-                                if (read < outputBufferLength)
-                                {
-                                    // SslStream returned non-full buffer and there's no more input to go through ->
-                                    // typically it means SslStream is done reading current frame so we skip
-                                    continue;
-                                }
-
-                                // we've read out `read` bytes out of current packet to fulfil previously outstanding read
-                                outputBufferLength = currentPacketLength - read;
-                                if (outputBufferLength <= 0)
-                                {
-                                    // after feeding to SslStream current frame it read out more bytes than current packet size
-                                    outputBufferLength = FallbackReadBufferSize;
-                                }
-                            }
-                            else
-                            {
-                                // SslStream did not get to reading current frame so it completed previous read sync
-                                // and the next read will likely read out the new frame
-                                outputBufferLength = currentPacketLength;
-                            }
+                            // SslStream did not get to reading current frame so it completed previous read sync
+                            // and the next read will likely read out the new frame
+                            outputBufferLength = currentPacketLength;
                         }
                     }
                     else
