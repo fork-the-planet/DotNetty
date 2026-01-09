@@ -1,4 +1,4 @@
-#### 0.7.8 January 8, 2026
+#### 0.8.0 January 8, 2026
 - Fix race condition in TlsHandler when negotiating client certificate (#602)
 - Deferred processing of pending data packets to ensure upstream handlers receive TlsHandshakeCompletionEvent before application data
 - Removed deprecated target frameworks: netcoreapp3.1 and net5.0
