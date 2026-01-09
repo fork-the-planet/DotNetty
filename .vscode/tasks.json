@@ -13,7 +13,7 @@
             ],
             "problemMatcher": "$msCompile",
             "group": {
-                "_id": "build",
+                "kind": "build",
                 "isDefault": false
             }
         }
