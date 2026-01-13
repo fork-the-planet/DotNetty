@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="5.0.0" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="System.Text.Encodings.Web" Version="5.0.1" />
     <ProjectReference Include="..\..\src\DotNetty.Common\DotNetty.Common.csproj" />
   </ItemGroup>
 </Project>
